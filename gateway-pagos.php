@@ -163,12 +163,8 @@ function init_pagos_gateway() {
 			$order = &new woocommerce_order( $order_id );
 			//print_r($order);
 			$oitems = unserialize($order->order_custom_fields['_order_items'][0]);
-			$_region = isset($_COOKIE['ms-region']) ? $_COOKIE['ms-region'] : mSalazar_Shop::get_data('region'); 
-			if($_region == "co"){
-		     $moneda = "COP";
-			}else{
-			$moneda = "USD";
-		}
+		    $moneda = "COP";
+			
 			$order_currency = $order->order_custom_fields[0];
 			$shipping_name = explode(' ', $order->shipping_method);
 			//echo "$this->firma~$this->usuarioId~$order_id~$order->order_total~$moneda";echo "<BR>";
