@@ -25,12 +25,19 @@ Author: 8manos S.A.S
 */
 
 // Init Pagosonline Gateway after WooCommerce has loaded
-add_action('plugins_loaded', 'init_pagos_gateway', 0);
+if ( in_array( 'woocommerce/woocommerce.php', apply_filters( 'active_plugins', get_option( 'active_plugins' ) ) ) ) {
+		/**
+		 * Localisation
+		 **/
+	#load_plugin_textdomain('woocommerce_pagos', false, dirname( plugin_basename( __FILE__ ) ) . '/');
+	
+	#add_action( 'plugins_loaded', 'wcpaysius_gateway_load', 0 );
+	add_action('plugins_loaded', 'init_pagos_gateway', 0);
 
 function init_pagos_gateway() {
 	// If the WooCommerce payment gateway class is not available, do nothing
-	if ( !class_exists( 'woocommerce_payment_gateway' ) ) return;
-	class woocommerce_pagos extends woocommerce_payment_gateway { 
+	if ( !class_exists( 'WC_Payment_Gateway' ) ) return;
+	class woocommerce_pagos extends WC_Payment_Gateway { 
 		public function __construct() { 
 			global $woocommerce; 
 			$this->id			= 'pagosonline';
@@ -541,3 +548,4 @@ function add_pagosonline_gateway( $methods ) {
 }
 
 add_filter('woocommerce_payment_gateways', 'add_pagosonline_gateway' );
+}
