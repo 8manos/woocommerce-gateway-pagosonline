@@ -168,14 +168,23 @@ function woocommerce_gateway_pagosonline_init() {
 		function get_pagosonline_args( $order ) {
 			global $woocommerce;
 
-			$order_id = $order->id;
-			$oitems = unserialize($order->order_custom_fields['_order_items'][0]);
-			$iva = $oitems[0]['line_subtotal_tax'];
-			//$order->get_total_tax();
-			$base_iva = $oitems[0]['line_total'];
-			//$order->get_subtotal_to_display(false, 'excl');
 			$moneda = get_woocommerce_currency();
 			$firma = md5("$this->llave~$this->usuarioId~$order->id~$order->order_total~$moneda");
+
+			//base only from items that have tax
+			$base_iva = 0;
+
+			$line_items = $order->get_items();//line items can have more than one of the same product
+			foreach ($line_items as $item) {
+				$item_tax = $order->get_line_tax($item);
+				if ($item_tax > 0) {
+					$base_iva += $order->get_line_total($item);
+				}
+			}
+			//shipping with tax
+			if ($order->get_shipping_tax() > 0) {
+				$base_iva += $order->get_shipping();
+			}
 
 			if ( $this->debug == 'yes' ) {
 				$this->log->add( 'pagosonline', 'Generating payment form for order ' . $order->get_order_number() . '. Notify URL: ' . $this->notify_url );
@@ -184,11 +193,11 @@ function woocommerce_gateway_pagosonline_init() {
 			// PagosOnline Args
 			$args = array(
 				'usuarioId'         => $this->usuarioId,
-				'refVenta'          => $order_id,
-				'descripcion'       => 'orden no. '.$order_id.' - valor: '.$order->order_total,
+				'refVenta'          => $order->id,
+				'descripcion'       => 'orden no. '.$order->id.' - valor: '.$order->order_total,
 				'valor'             => $order->order_total,
-				'iva'               => $iva,
-				'baseDevolucionIva' => $base_iva,
+				'iva'               => $order->get_total_tax(),
+				'baseDevolucionIva' => (string) $base_iva,
 				'firma'             => $firma,
 				'emailComprador'    => $order->billing_email,
 				'moneda'            => $moneda,
@@ -220,7 +229,7 @@ function woocommerce_gateway_pagosonline_init() {
 
 			$redirect = ($this->testmode == 'yes') ? $this->testurl : $this->liveurl;
 
-			$order->update_status('on-hold', 'Esperando respuesta PagosOnline');
+			$order->update_status('on-hold', 'Esperando respuesta PagosOnline.');
 			$order->reduce_order_stock();
 			$woocommerce->cart->empty_cart();
 
