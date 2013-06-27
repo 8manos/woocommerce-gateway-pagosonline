@@ -34,7 +34,7 @@ function woocommerce_gateway_pagosonline_init() {
 			global $woocommerce;
 
 			$this->id                 = 'pagosonline';
-			$this->icon               = plugins_url('images/pagos_logo.jpg', __FILE__);
+			$this->icon               = plugins_url('images/pol_trans.png', __FILE__);
 			$this->has_fields         = false;
 			$this->method_title       = 'PagosOnline';
 			$this->method_description = 'PagosOnline works by sending the user to <a href="http://www.pagosonline.com">pagosonline</a> to enter their payment information.';
@@ -61,6 +61,9 @@ function woocommerce_gateway_pagosonline_init() {
 				$this->log = $woocommerce->logger();
 
 			add_action( 'woocommerce_update_options_payment_gateways_'.$this->id, array($this, 'process_admin_options') );
+
+			//to generate PagosOnline form (submit it automatically using javascript)
+			add_action( 'woocommerce_receipt_pagosonline', array( $this, 'receipt_page' ) );
 
 			// Payment listener/API hook
 			add_action( 'woocommerce_api_wc_gateway_pagosonline', array( $this, 'check_pagos_response' ) );
@@ -126,7 +129,9 @@ function woocommerce_gateway_pagosonline_init() {
 		 * @return bool
 		 */
 		function is_valid_for_use() {
-			if ( ! in_array( get_woocommerce_currency(), apply_filters( 'woocommerce_paypal_supported_currencies', array('COP', 'MXN', 'USD', 'EUR', 'GBP', 'VEB') ) ) ) return false;
+			if ( ! in_array( get_woocommerce_currency(), array('COP', 'MXN', 'USD', 'EUR', 'GBP', 'VEB') ) ) {
+				return false;
+			}
 
 			return true;
 		}
@@ -212,6 +217,58 @@ function woocommerce_gateway_pagosonline_init() {
 			return $args;
 		}
 
+
+		/**
+		 * Generate the pagosonline button link
+		 *
+		 * @access public
+		 * @param mixed $order_id
+		 * @return string
+		 */
+		function generate_pagosonline_form( $order_id ) {
+			global $woocommerce;
+
+			$order = new WC_Order( $order_id );
+
+			$pagosonline_adr = ($this->testmode == 'yes') ? $this->testurl : $this->liveurl;
+
+			$pagosonline_args = $this->get_pagosonline_args( $order );
+
+			$form_inputs = array();
+
+			foreach ($pagosonline_args as $key => $value) {
+				$form_inputs[] = '<input type="hidden" name="'.esc_attr( $key ).'" value="'.esc_attr( $value ).'" />';
+			}
+
+			$woocommerce->add_inline_js( '
+				jQuery("body").block({
+					message: "' . esc_js( __( 'Thank you for your order. We are now redirecting you to PagosOnline to make payment.', 'woocommerce' ) ) . '",
+					baseZ: 99999,
+					overlayCSS:
+					{
+						background: "#fff",
+						opacity: 0.6
+					},
+					css: {
+						padding:        "20px",
+						zindex:         "9999999",
+						textAlign:      "center",
+						color:          "#555",
+						border:         "3px solid #aaa",
+						backgroundColor:"#fff",
+						cursor:         "wait",
+						lineHeight:		"24px",
+					}
+				});
+				jQuery("#submit_pagosonline_payment_form").click();
+			' );
+
+			return '<form action="'.esc_url( $pagosonline_adr ).'" method="post" id="pagosonline_payment_form" target="_top">
+				' . implode( '', $form_inputs) . '
+				<input type="submit" class="button alt" id="submit_pagosonline_payment_form" value="' . __( 'Pay via PagosOnline', 'woocommerce' ) . '" /> <a class="button cancel" href="'.esc_url( $order->get_cancel_order_url() ).'">'.__( 'Cancel order &amp; restore cart', 'woocommerce' ).'</a>
+			</form>';
+		}
+
 		/**
 		 * Process the payment and return the result
 		 *
@@ -220,23 +277,33 @@ function woocommerce_gateway_pagosonline_init() {
 		 * @return array
 		 */
 		function process_payment( $order_id ) {
-			global $woocommerce;
+
 			$order = new WC_Order( $order_id );
 
-			$redirect_args = $this->get_pagosonline_args( $order );
+			return array(
+				'result'   => 'success',
+				'redirect' => add_query_arg( 'order', $order->id, add_query_arg( 'key', $order->order_key, get_permalink( woocommerce_get_page_id('pay') ) ) )
+			);
+		}
 
-			$redirect_args = http_build_query( $redirect_args, '', '&' );
+		/**
+		 * Output for the order received page.
+		 *
+		 * @access public
+		 * @return void
+		 */
+		function receipt_page( $order_id ) {
+			global $woocommerce;
 
-			$redirect = ($this->testmode == 'yes') ? $this->testurl : $this->liveurl;
+			$order = new WC_Order( $order_id );
 
 			$order->update_status('on-hold', 'Esperando respuesta PagosOnline.');
 			$order->reduce_order_stock();
 			$woocommerce->cart->empty_cart();
 
-			return array(
-				'result' 	=> 'success',
-				'redirect'	=> $redirect . '?' . $redirect_args
-			);
+			echo '<p>'.__( 'Thank you for your order, please click the button below to pay with PagosOnline.', 'woocommerce' ).'</p>';
+			echo $this->generate_pagosonline_form( $order_id );
+
 		}
 
 		/**
@@ -255,7 +322,7 @@ function woocommerce_gateway_pagosonline_init() {
 				$estado_pol           = $_POST['estado_pol'];
 				$codigo_respuesta_pol = $_POST['codigo_respuesta_pol'];
 				$ref_venta            = $_POST['ref_venta'];
-				//$ref_pol              = $_POST['ref_pol'];
+				$ref_pol              = $_POST['ref_pol'];
 				$firma                = $_POST['firma'];
 				$valor                = $_POST['valor'];
 				$moneda               = $_POST['moneda'];
@@ -281,6 +348,9 @@ function woocommerce_gateway_pagosonline_init() {
 					$this->log->add( 'pagosonline', 'Payment status: ' . $estado_pol );
 					$this->log->add( 'pagosonline', 'Payment code: ' . $codigo_respuesta_pol );
 				}
+
+				//número de transacción PagosOnline
+				$order->add_order_note('ref_pol: '.$ref_pol);
 
 				// We are here so lets check status and do actions
 				switch ( $estado_pol ) {
