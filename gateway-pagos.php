@@ -28,12 +28,20 @@ function woocommerce_gateway_pagosonline_init() {
 	 */
 	class WC_Gateway_Pagosonline extends WC_Payment_Gateway {
 
+		var $notify_url;
+
 		function __construct() {
+			global $woocommerce;
+
 			$this->id                 = 'pagosonline';
 			$this->icon               = plugins_url( 'images/pagos_logo.jpg', dirname(__FILE__) );
 			$this->has_fields         = false;
 			$this->method_title       = 'PagosOnline';
 			$this->method_description = 'PagosOnline works by sending the user to <a href="http://www.pagosonline.com">pagosonline</a> to enter their payment information.';
+
+			$this->liveurl    = 'https://gateway.pagosonline.net/apps/gateway/index.html';
+			$this->testurl    = 'https://gateway2.pagosonline.net/apps/gateway/index.html';
+			$this->notify_url = str_replace( 'https:', 'http:', add_query_arg( 'wc-api', 'WC_Gateway_Pagosonline', home_url( '/' ) ) );
 
 			// Load the form fields.
 			$this->init_form_fields();
@@ -46,8 +54,16 @@ function woocommerce_gateway_pagosonline_init() {
 			$this->usuarioId   = $this->get_option('usuarioId');
 			$this->llave       = $this->get_option('llave');
 			$this->testmode    = $this->get_option('testmode');
+			$this->debug       = $this->get_option( 'debug' );
+
+			// Logs
+			if ( $this->debug == 'yes' )
+				$this->log = $woocommerce->logger();
 
 			add_action( 'woocommerce_update_options_payment_gateways_'.$this->id, array($this, 'process_admin_options') );
+
+			// Payment listener/API hook
+			add_action( 'woocommerce_api_wc_gateway_pagosonline', array( $this, 'check_pagos_response' ) );
 		}
 
 		/**
@@ -93,6 +109,13 @@ function woocommerce_gateway_pagosonline_init() {
 					'default' => 'yes',
 					'description' => 'Módulo que permite realizar pruebas con tarjetas de crédito ficticias y pagos simulados sobre el sistema PSE, en tiempo real.',
 				),
+				'debug' => array(
+					'title' => __( 'Debug Log', 'woocommerce' ),
+					'type' => 'checkbox',
+					'label' => __( 'Enable logging', 'woocommerce' ),
+					'default' => 'no',
+					'description' => sprintf( __( 'Log PagosOnline events, such as IPN requests, inside <code>woocommerce/logs/pagosonline-%s.txt</code>', 'woocommerce' ), sanitize_file_name( wp_hash( 'pagosonline' ) ) ),
+				)
 			);
 		}
 
@@ -133,6 +156,158 @@ function woocommerce_gateway_pagosonline_init() {
 				<div class="inline error"><p><strong><?php _e( 'Gateway Disabled', 'woocommerce' ); ?></strong>: <?php _e( 'PagosOnline does not support your store currency.', 'woocommerce' ); ?></p></div>
 			<?php
 			endif;
+		}
+
+		/**
+		 * Get args for passing to PagosOnline
+		 *
+		 * @access public
+		 * @param mixed $order
+		 * @return array
+		 */
+		function get_pagosonline_args( $order ) {
+			global $woocommerce;
+
+			$order_id = $order->id;
+			$oitems = unserialize($order->order_custom_fields['_order_items'][0]);
+			$iva = $oitems[0]['line_subtotal_tax'];
+			//$order->get_total_tax();
+			$base_iva = $oitems[0]['line_total'];
+			//$order->get_subtotal_to_display(false, 'excl');
+			$moneda = get_woocommerce_currency();
+			$firma = md5("$this->llave~$this->usuarioId~$order->id~$order->order_total~$moneda");
+
+			if ( $this->debug == 'yes' ) {
+				$this->log->add( 'pagosonline', 'Generating payment form for order ' . $order->get_order_number() . '. Notify URL: ' . $this->notify_url );
+			}
+
+			// PagosOnline Args
+			$args = array(
+				'usuarioId'         => $this->usuarioId,
+				'refVenta'          => $order_id,
+				'descripcion'       => 'orden no. '.$order_id.' - valor: '.$order->order_total,
+				'valor'             => $order->order_total,
+				'iva'               => $iva,
+				'baseDevolucionIva' => $base_iva,
+				'firma'             => $firma,
+				'emailComprador'    => $order->billing_email,
+				'moneda'            => $moneda,
+				'nombreComprador'   => $order->billing_first_name.' '.$order->billing_last_name,
+				'telefonoMovil'     => $order->billing_phone,
+				'url_respuesta'     => $this->get_return_url( $order ),
+				'url_confirmacion'  => $this->notify_url
+			);
+
+			$args['prueba'] = ($this->testmode == 'yes') ? 1 : 0;
+
+			return $args;
+		}
+
+		/**
+		 * Process the payment and return the result
+		 *
+		 * @access public
+		 * @param int $order_id
+		 * @return array
+		 */
+		function process_payment( $order_id ) {
+			global $woocommerce;
+			$order = new WC_Order( $order_id );
+
+			$redirect_args = $this->get_pagosonline_args( $order );
+
+			$redirect_args = http_build_query( $redirect_args, '', '&' );
+
+			$redirect = ($this->testmode == 'yes') ? $this->testurl : $this->liveurl;
+
+			$order->update_status('on-hold', 'Esperando respuesta PagosOnline');
+			$order->reduce_order_stock();
+			$woocommerce->cart->empty_cart();
+
+			return array(
+				'result' 	=> 'success',
+				'redirect'	=> $redirect . '?' . $redirect_args
+			);
+		}
+
+		/**
+		 * Check for PagosOnline IPN Response
+		 *
+		 * @access public
+		 * @return void
+		 */
+		function check_pagos_response() {
+
+			@ob_clean();
+
+			if ( ! empty($_POST) ) {
+
+				$usuario_id           = $_POST['usuario_id'];
+				$estado_pol           = $_POST['estado_pol'];
+				$codigo_respuesta_pol = $_POST['codigo_respuesta_pol'];
+				$ref_venta            = $_POST['ref_venta'];
+				//$ref_pol              = $_POST['ref_pol'];
+				$firma                = $_POST['firma'];
+				$valor                = $_POST['valor'];
+				$moneda               = $_POST['moneda'];
+
+				$firma_generada = md5("$this->llave~$usuario_id~$ref_venta~$valor~$moneda~$estado_pol");
+
+				if ( $this->usuarioId != $usuario_id || $firma != $firma_generada ) {
+					if ( $this->debug == 'yes' )
+						$this->log->add( 'pagosonline', 'Error: User Id or key are wrong.' );
+					exit;
+				}
+
+				$order = new WC_Order( $ref_venta );
+
+				if ( ! isset( $order->id ) ) {
+					if ( $this->debug == 'yes' )
+						$this->log->add( 'pagosonline', 'Error: Order Id does not match invoice.' );
+					exit;
+				}
+
+				if ( $this->debug == 'yes' ) {
+					$this->log->add( 'pagosonline', 'Found order #' . $order->id );
+					$this->log->add( 'pagosonline', 'Payment status: ' . $estado_pol );
+					$this->log->add( 'pagosonline', 'Payment code: ' . $codigo_respuesta_pol );
+				}
+
+				// We are here so lets check status and do actions
+				switch ( $estado_pol ) {
+					case 4 :
+						// Payment completed
+						$order->add_order_note('codigo_pol: '.$codigo_respuesta_pol);
+						$order->payment_complete();
+
+						if ( $this->debug == 'yes' )
+							$this->log->add( 'pagosonline', 'Payment complete.' );
+
+						break;
+					case 5 :
+						$order->update_status('cancelled', 'codigo_pol: '.$codigo_respuesta_pol);
+						break;
+					case 6 :
+						$order->update_status('failed', 'codigo_pol: '.$codigo_respuesta_pol);
+						break;
+					case 7 :
+						$order->update_status('processing', 'codigo_pol: '.$codigo_respuesta_pol);
+						break;
+					case 8 :
+					case 9 :
+						$order->update_status('refunded', 'Orden reversada. codigo_pol: '.$codigo_respuesta_pol);
+						break;
+					default:
+						$order->add_order_note('estado_pol: '.$estado_pol.' - codigo_pol: '.$codigo_respuesta_pol);
+				}
+				exit;
+
+			} else {
+
+				wp_die( "PagosOnline IPN Request Failure" );
+
+			}
+
 		}
 	}
 
