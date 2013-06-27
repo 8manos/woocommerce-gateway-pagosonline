@@ -34,7 +34,7 @@ function woocommerce_gateway_pagosonline_init() {
 			global $woocommerce;
 
 			$this->id                 = 'pagosonline';
-			$this->icon               = plugins_url( 'images/pagos_logo.jpg', dirname(__FILE__) );
+			$this->icon               = plugins_url('images/pagos_logo.jpg', __FILE__);
 			$this->has_fields         = false;
 			$this->method_title       = 'PagosOnline';
 			$this->method_description = 'PagosOnline works by sending the user to <a href="http://www.pagosonline.com">pagosonline</a> to enter their payment information.';
