@@ -56,6 +56,9 @@ function woocommerce_gateway_pagosonline_init() {
 			$this->testmode    = $this->get_option('testmode');
 			$this->debug       = $this->get_option( 'debug' );
 
+			//send using POST or GET
+			$this->form_submission_method = $this->get_option( 'form_submission_method' ) == 'yes' ? true : false;
+
 			// Logs
 			if ( $this->debug == 'yes' )
 				$this->log = $woocommerce->logger();
@@ -118,6 +121,13 @@ function woocommerce_gateway_pagosonline_init() {
 					'label' => __( 'Enable logging', 'woocommerce' ),
 					'default' => 'no',
 					'description' => sprintf( __( 'Log PagosOnline events, such as IPN requests, inside <code>woocommerce/logs/pagosonline-%s.txt</code>', 'woocommerce' ), sanitize_file_name( wp_hash( 'pagosonline' ) ) ),
+				),
+				'form_submission_method' => array(
+					'title' => __( 'Submission method', 'woocommerce' ),
+					'type' => 'checkbox',
+					'label' => __( 'Use form submission method.', 'woocommerce' ),
+					'description' => 'Activando esta opción, se utilizará un formulario para enviar los datos a PagosOnline, ocultando la información del pedido de la URL.',
+					'default' => 'no'
 				)
 			);
 		}
@@ -269,6 +279,15 @@ function woocommerce_gateway_pagosonline_init() {
 			</form>';
 		}
 
+		function pre_process_order($order) {
+			global $woocommerce;
+
+			$order->update_status('on-hold', 'Esperando respuesta PagosOnline.');
+			$order->reduce_order_stock();
+
+			$woocommerce->cart->empty_cart();
+		}
+
 		/**
 		 * Process the payment and return the result
 		 *
@@ -280,10 +299,25 @@ function woocommerce_gateway_pagosonline_init() {
 
 			$order = new WC_Order( $order_id );
 
-			return array(
-				'result'   => 'success',
-				'redirect' => add_query_arg( 'order', $order->id, add_query_arg( 'key', $order->order_key, get_permalink( woocommerce_get_page_id('pay') ) ) )
-			);
+			if ( ! $this->form_submission_method ) {
+				$redirect_args = $this->get_pagosonline_args( $order );
+				$redirect_args = http_build_query( $redirect_args, '', '&' );
+
+				$redirect = ($this->testmode == 'yes') ? $this->testurl : $this->liveurl;
+
+				$this->pre_process_order($order);
+
+				return array(
+					'result'   => 'success',
+					'redirect'  => $redirect . '?' . $redirect_args
+				);
+			} else {
+
+				return array(
+					'result'   => 'success',
+					'redirect' => add_query_arg( 'order', $order->id, add_query_arg( 'key', $order->order_key, get_permalink( woocommerce_get_page_id('pay') ) ) )
+				);
+			}
 		}
 
 		/**
@@ -293,13 +327,10 @@ function woocommerce_gateway_pagosonline_init() {
 		 * @return void
 		 */
 		function receipt_page( $order_id ) {
-			global $woocommerce;
 
 			$order = new WC_Order( $order_id );
 
-			$order->update_status('on-hold', 'Esperando respuesta PagosOnline.');
-			$order->reduce_order_stock();
-			$woocommerce->cart->empty_cart();
+			$this->pre_process_order($order);
 
 			echo '<p>'.__( 'Thank you for your order, please click the button below to pay with PagosOnline.', 'woocommerce' ).'</p>';
 			echo $this->generate_pagosonline_form( $order_id );
