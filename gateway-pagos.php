@@ -358,11 +358,14 @@ function woocommerce_gateway_pagosonline_init() {
 				$valor                = $_POST['valor'];
 				$moneda               = $_POST['moneda'];
 
-				$firma_generada = md5("$this->llave~$usuario_id~$ref_venta~$valor~$moneda~$estado_pol");
+				$firma_generada = strtoupper(md5("$this->llave~$usuario_id~$ref_venta~$valor~$moneda~$estado_pol"));
 
 				if ( $this->usuarioId != $usuario_id || $firma != $firma_generada ) {
-					if ( $this->debug == 'yes' )
+					if ( $this->debug == 'yes' ) {
 						$this->log->add( 'pagosonline', 'Error: User Id or key are wrong.' );
+						$this->log->add( 'pagosonline', 'config_user: '.$this->usuarioId.'. post_user: '.$usuario_id );
+						$this->log->add( 'pagosonline', 'sent_key: '.$firma.'. gen_key: '.$firma_generada );
+					}
 					exit;
 				}
 
