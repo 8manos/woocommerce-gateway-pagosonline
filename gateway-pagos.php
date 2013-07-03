@@ -30,6 +30,41 @@ function woocommerce_gateway_pagosonline_init() {
 
 		var $notify_url;
 
+		var $pol_codes = array(
+			1 => 'Transacción aprobada',
+			2 => 'Pago cancelado por el usuario',
+			3 => 'Pago cancelado por el usuario durante validación',
+			4 => 'Transacción rechazada por la entidad',
+			5 => 'Transacción declinada por la entidad',
+			6 => 'Fondos insuficientes',
+			7 => 'Tarjeta invalida',
+			8 => 'Acuda a su entidad',
+			9 => 'Tarjeta vencida',
+			10 => 'Tarjeta restringida',
+			11 => 'Discrecional POL',
+			12 => 'Fecha de expiracióno campo seg. Inválidos',
+			13 => 'Repita transacción',
+			14 => 'Transacción inválida',
+			15 => 'Transacción en proceso de validación',
+			16 => 'Combinación usuario-contraseña inválidos',
+			17 => 'Monto excede máximo permitido por entidad',
+			18 => 'Documento de identificación inválido',
+			19 => 'Transacción abandonada capturando datos TC',
+			20 => 'Transacción abandonada',
+			21 => 'Imposible reversar transacción',
+			22 => 'Tarjeta no autorizada para realizar compras por internet.',
+			23 => 'Transacción rechazada',
+			24 => 'Transacción parcial aprobada',
+			25 => 'Rechazada por no confirmación',
+			26 => 'Comprobante generado, esperando pago en banco',
+			9994 => 'Transacción pendiente por confirmar',
+			9995 => 'Certificado digital no encontrado',
+			9996 => 'Entidad no responde',
+			9997 => 'Error de mensajería con la entidad financiera',
+			9998 => 'Error en la entidad financiera',
+			9999 => 'Error no especificado'
+		);
+
 		function __construct() {
 			global $woocommerce;
 
@@ -283,7 +318,7 @@ function woocommerce_gateway_pagosonline_init() {
 			global $woocommerce;
 
 			$order->update_status('on-hold', 'Esperando respuesta PagosOnline.');
-			$order->reduce_order_stock();
+			//$order->reduce_order_stock();
 
 			$woocommerce->cart->empty_cart();
 		}
@@ -386,11 +421,13 @@ function woocommerce_gateway_pagosonline_init() {
 				//número de transacción PagosOnline
 				$order->add_order_note('ref_pol: '.$ref_pol);
 
+				$respuesta_pol = $this->pol_codes[$codigo_respuesta_pol];
+
 				// We are here so lets check status and do actions
 				switch ( $estado_pol ) {
 					case 4 :
 						// Payment completed
-						$order->add_order_note('codigo_pol: '.$codigo_respuesta_pol);
+						$order->add_order_note('respuesta_pol: '.$respuesta_pol);
 						$order->payment_complete();
 
 						if ( $this->debug == 'yes' )
@@ -398,20 +435,20 @@ function woocommerce_gateway_pagosonline_init() {
 
 						break;
 					case 5 :
-						$order->update_status('cancelled', 'codigo_pol: '.$codigo_respuesta_pol);
+						$order->update_status('cancelled', 'respuesta_pol: '.$respuesta_pol);
 						break;
 					case 6 :
-						$order->update_status('failed', 'codigo_pol: '.$codigo_respuesta_pol);
+						$order->update_status('failed', 'respuesta_pol: '.$respuesta_pol);
 						break;
 					case 7 :
-						$order->update_status('processing', 'codigo_pol: '.$codigo_respuesta_pol);
+						$order->update_status('processing', 'respuesta_pol: '.$respuesta_pol);
 						break;
 					case 8 :
 					case 9 :
-						$order->update_status('refunded', 'Orden reversada. codigo_pol: '.$codigo_respuesta_pol);
+						$order->update_status('refunded', 'Orden reversada. respuesta_pol: '.$respuesta_pol);
 						break;
 					default:
-						$order->add_order_note('estado_pol: '.$estado_pol.' - codigo_pol: '.$codigo_respuesta_pol);
+						$order->add_order_note('estado_pol: '.$estado_pol.' - respuesta_pol: '.$respuesta_pol);
 				}
 				exit;
 
