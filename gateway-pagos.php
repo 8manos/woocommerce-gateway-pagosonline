@@ -462,6 +462,39 @@ function woocommerce_gateway_pagosonline_init() {
 	}
 
 	/**
+	 * Overrides woocommerce core templates. We use it for thank you page
+	 */
+	function pagosonline_locate_template($template, $template_name, $template_path) {
+		global $woocommerce;
+		$default_template = $template;
+
+		if ( ! $template_path ) $template_path = $woocommerce->template_url;
+		$plugin_path  = untrailingslashit( plugin_dir_path( __FILE__ ) ) . '/woocommerce/';
+
+		// Look within passed path within the theme - this is priority
+		$template = locate_template(
+			array(
+				trailingslashit( $template_path ) . $template_name,
+				$template_name
+			)
+		);
+
+		// Get the template from this plugin, if it exists
+		if ( ! $template && file_exists( $plugin_path . $template_name ) ) {
+		    $template = $plugin_path . $template_name;
+		}
+
+		// Use default template
+		if ( ! $template ) {
+		    $template = $default_template;
+		}
+
+		// Return what we found
+		return $template;
+	}
+	add_filter('woocommerce_locate_template', 'pagosonline_locate_template', 10, 3);
+
+	/**
 	* Add the Gateway to WooCommerce
 	**/
 	function woocommerce_add_gateway_pagosonline($methods) {
